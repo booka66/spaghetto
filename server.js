@@ -21,11 +21,15 @@ const POWERUP_SIZE = 5;
 const rooms = new Map();
 
 function updatePlayerPosition(player, deltaTime) {
-  player.angle += player.turning * TURN_RATE;
-  const newX = player.x + Math.cos(player.angle) * MOVEMENT_SPEED;
-  const newY = player.y + Math.sin(player.angle) * MOVEMENT_SPEED;
-  player.x = ((newX % GAME_WIDTH) + GAME_WIDTH) % GAME_WIDTH;
-  player.y = ((newY % GAME_HEIGHT) + GAME_HEIGHT) % GAME_HEIGHT;
+  if (!player.is_dead) {
+    player.angle += player.turning * TURN_RATE;
+    const newX = player.x + Math.cos(player.angle) * MOVEMENT_SPEED;
+    const newY = player.y + Math.sin(player.angle) * MOVEMENT_SPEED;
+
+    // Wrap around screen edges
+    player.x = ((newX % GAME_WIDTH) + GAME_WIDTH) % GAME_WIDTH;
+    player.y = ((newY % GAME_HEIGHT) + GAME_HEIGHT) % GAME_HEIGHT;
+  }
 }
 
 function generateRoomCode() {
@@ -48,7 +52,8 @@ function createPlayerData() {
     turning: 0,
     lastUpdate: Date.now(),
     is_about_to_hit: false,
-    is_over: false,
+    is_dead: false,
+    respawn_timer: 0,
     bullets: 0,
     activeBullets: [],
   };
@@ -99,18 +104,18 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('pixelState', ({ roomCode, isAboutToHit, isOver }) => {
+  socket.on('pixelState', ({ roomCode, isAboutToHit }) => {
     const room = rooms.get(roomCode);
     if (room) {
       const player = room.players.get(socket.id);
       if (player) {
         player.is_about_to_hit = isAboutToHit;
-        player.is_over = isOver;
       }
     }
   });
 
   socket.on('turn', ({ roomCode, direction }) => {
+    console.log(`Turn event received: direction=${direction}`);
     const room = rooms.get(roomCode);
     if (room) {
       const player = room.players.get(socket.id);
@@ -158,9 +163,34 @@ setInterval(() => {
     if (room.gameStarted) {
       // Update all players and their bullets
       room.players.forEach((player) => {
+        if (player.is_about_to_hit) {
+          player.is_dead = true;
+          player.respawn_timer = 3000;
+          player.bullets = 0;
+          player.activeBullets = [];
+          player.turning = 0;
+        }
+
+        if (player.is_dead) {
+          player.respawn_timer -= 1000 / 60;
+          if (player.respawn_timer <= 0) {
+            player.is_dead = false;
+            player.is_about_to_hit = false;
+            player.x = Math.random() * GAME_WIDTH;
+            player.y = Math.random() * GAME_HEIGHT;
+            player.angle = Math.random() * Math.PI * 2;
+          }
+          return;
+        }
         // Update player position
         const deltaTime = currentTime - player.lastUpdate;
+        const oldX = player.x;
+        const oldY = player.y;
         updatePlayerPosition(player, deltaTime);
+
+        if (oldX !== player.x || oldY !== player.y) {
+          console.log(`Player moved: (${oldX},${oldY}) -> (${player.x},${player.y})`);
+        }
 
         // Update bullets
         if (player.activeBullets) {
