@@ -4,6 +4,7 @@ const http = require('http').createServer(app);
 const io = require('socket.io')(http);
 const path = require('path');
 
+// Serve static files from the public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Game constants
@@ -11,6 +12,10 @@ const GAME_WIDTH = 1080;
 const GAME_HEIGHT = 720;
 const TURN_RATE = 0.1;
 const MOVEMENT_SPEED = 1.5;
+const POWERUP_SPAWN_INTERVAL = 10000; // 10 seconds
+const POWERUP_DURATION = 15000; // 15 seconds
+const POWERUP_COLLECTION_RADIUS = 25; // Increased from 10 to 25 pixels
+const POWERUP_SIZE = 5;
 
 // Store rooms and players
 const rooms = new Map();
@@ -43,7 +48,9 @@ function createPlayerData() {
     turning: 0,
     lastUpdate: Date.now(),
     is_about_to_hit: false,
-    is_over: false
+    is_over: false,
+    bullets: 0,
+    activeBullets: [],
   };
 }
 
@@ -53,7 +60,6 @@ io.on('connection', (socket) => {
   socket.on('createRoom', (callback) => {
     const roomCode = generateRoomCode();
     const players = new Map();
-    // Add the host as the first player
     players.set(socket.id, createPlayerData());
 
     rooms.set(roomCode, {
@@ -64,7 +70,6 @@ io.on('connection', (socket) => {
 
     socket.join(roomCode);
     callback({ roomCode });
-    // Emit initial player list
     io.to(roomCode).emit('playerList', Array.from(players.keys()));
   });
 
@@ -128,24 +133,108 @@ io.on('connection', (socket) => {
       }
     });
   });
-});
 
-// Game loop for each room
-setInterval(() => {
-  const currentTime = Date.now();
-  rooms.forEach((room, roomCode) => {
-    if (room.gameStarted) {
-      room.players.forEach((player) => {
-        const deltaTime = currentTime - player.lastUpdate;
-        updatePlayerPosition(player, deltaTime);
-        player.lastUpdate = currentTime;
-      });
-      io.to(roomCode).emit('gameState', Array.from(room.players.entries()));
+  socket.on('shoot', ({ roomCode }) => {
+    const room = rooms.get(roomCode);
+    if (room) {
+      const player = room.players.get(socket.id);
+      if (player && player.bullets > 0) {
+        player.bullets--;
+        player.activeBullets.push({
+          x: player.x,
+          y: player.y,
+          angle: player.angle
+        });
+      }
     }
   });
-}, 1000 / 60);
+});
 
-// Start the server
+// Game loop
+setInterval(() => {
+  const currentTime = Date.now();
+
+  rooms.forEach((room, roomCode) => {
+    if (room.gameStarted) {
+      // Update all players and their bullets
+      room.players.forEach((player) => {
+        // Update player position
+        const deltaTime = currentTime - player.lastUpdate;
+        updatePlayerPosition(player, deltaTime);
+
+        // Update bullets
+        if (player.activeBullets) {
+          const BULLET_SPEED = 3;
+          player.activeBullets = player.activeBullets.map(bullet => ({
+            x: ((bullet.x + Math.cos(bullet.angle) * BULLET_SPEED) % GAME_WIDTH + GAME_WIDTH) % GAME_WIDTH,
+            y: ((bullet.y + Math.sin(bullet.angle) * BULLET_SPEED) % GAME_HEIGHT + GAME_HEIGHT) % GAME_HEIGHT,
+            angle: bullet.angle
+          })).filter(bullet => {
+            const MAX_DISTANCE = 100;
+            const dx = bullet.x - player.x;
+            const dy = bullet.y - player.y;
+            return Math.sqrt(dx * dx + dy * dy) < MAX_DISTANCE;
+          });
+        }
+
+        player.lastUpdate = currentTime;
+      });
+
+      // Spawn power-ups
+      if (!room.lastPowerUpSpawn || currentTime - room.lastPowerUpSpawn > POWERUP_SPAWN_INTERVAL) {
+        const powerUp = {
+          x: Math.random() * (GAME_WIDTH - 2 * POWERUP_SIZE) + POWERUP_SIZE,
+          y: Math.random() * (GAME_HEIGHT - 2 * POWERUP_SIZE) + POWERUP_SIZE,
+          type: 'bullet',
+          spawnTime: currentTime,
+          size: POWERUP_SIZE
+        };
+        room.powerUps = room.powerUps || [];
+        room.powerUps.push(powerUp);
+        room.lastPowerUpSpawn = currentTime;
+        io.to(roomCode).emit('powerUpSpawned', powerUp);
+      }
+
+      // Remove expired power-ups
+      if (room.powerUps) {
+        room.powerUps = room.powerUps.filter(powerUp =>
+          currentTime - powerUp.spawnTime < POWERUP_DURATION
+        );
+      }
+
+      // Check for power-up collection with improved collision detection
+      room.players.forEach((player) => {
+        if (room.powerUps) {
+          room.powerUps = room.powerUps.filter(powerUp => {
+            const dx = powerUp.x - player.x;
+            const dy = powerUp.y - player.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < POWERUP_COLLECTION_RADIUS) { // Using larger collection radius
+              if (powerUp.type === 'bullet') {
+                player.bullets += 3; // Give player 3 bullets
+              }
+              // Emit power-up collection event
+              io.to(roomCode).emit('powerUpCollected', {
+                playerId: player.id,
+                powerUpType: powerUp.type
+              });
+              return false; // Remove the power-up
+            }
+            return true; // Keep the power-up
+          });
+        }
+      });
+
+      // Broadcast game state to all players in the room
+      io.to(roomCode).emit('gameState', {
+        players: Array.from(room.players.entries()),
+        powerUps: room.powerUps || []
+      });
+    }
+  });
+}, 1000 / 60); // 60 FPS
+
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);

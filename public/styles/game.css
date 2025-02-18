@@ -1,0 +1,11 @@
+.game-screen {
+  display: none;
+}
+
+canvas {
+  border: 1px solid black;
+  display: none;
+  margin: 20px auto;
+  position: relative;
+  z-index: 1;
+}
