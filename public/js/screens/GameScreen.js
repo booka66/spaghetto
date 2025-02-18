@@ -4,44 +4,71 @@ export class GameScreen {
     this.socket = socket;
     this.element = document.getElementById('gameScreen');
     this.canvas = document.getElementById('gameCanvas');
+
+    // Bind event handlers
+    this.handleGameState = this.handleGameState.bind(this);
+    this.handleKeyDown = this.handleKeyDown.bind(this);
+    this.handleKeyUp = this.handleKeyUp.bind(this);
   }
 
   initialize() {
+    // Add event listeners
     document.addEventListener('showGameScreen', () => {
       this.show();
     });
 
-    this.socket.onGameState((gameState) => {
-      this.gameState.update(gameState);
-    });
+    this.socket.onGameState(this.handleGameState);
+    document.addEventListener('keydown', this.handleKeyDown);
+    document.addEventListener('keyup', this.handleKeyUp);
+  }
 
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowLeft') {
+  handleGameState(gameState) {
+    this.gameState.update(gameState);
+  }
+
+  handleKeyDown(e) {
+    switch (e.key) {
+      case 'ArrowLeft':
+        console.log('Turning left');
         this.socket.emitTurn(-1);
-      } else if (e.key === 'ArrowRight') {
+        break;
+      case 'ArrowRight':
+        console.log('Turning right');
         this.socket.emitTurn(1);
-      } else if (e.key === 'r') {
-        this.gameState.reset();
-      } else if (e.key === 'ArrowUp') { // Space key for shooting
+        break;
+      case 'r':
+        if (this.gameState) {
+          this.gameState.initialize();
+        }
+        break;
+      case 'ArrowUp':
         this.socket.emitShoot();
-      }
-    });
+        break;
+    }
+  }
 
-    document.addEventListener('keyup', (e) => {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        this.socket.emitTurn(0);
-      }
-    });
+  handleKeyUp(e) {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      this.socket.emitTurn(0);
+    }
   }
 
   show() {
     this.element.style.display = 'block';
     this.canvas.style.display = 'block';
-    this.gameState.initialize();
+    if (this.gameState) {
+      this.gameState.initialize();
+    }
   }
 
   hide() {
     this.element.style.display = 'none';
     this.canvas.style.display = 'none';
+  }
+
+  cleanup() {
+    // Remove event listeners when necessary
+    document.removeEventListener('keydown', this.handleKeyDown);
+    document.removeEventListener('keyup', this.handleKeyUp);
   }
 }

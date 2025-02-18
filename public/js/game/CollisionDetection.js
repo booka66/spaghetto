@@ -31,19 +31,19 @@ export class CollisionDetection {
     // Get pixel data
     const pixel = this.ctx.getImageData(roundedX, roundedY, 1, 1).data;
 
-    // Check if pixel is not white (255, 255, 255)
-    return pixel[0] !== 255 || pixel[1] !== 255 || pixel[2] !== 255;
+    // Ignore white pixels (255, 255, 255) and yellow powerup pixels (255, 255, 0)
+    if (pixel[0] === 255 && pixel[1] === 255 && pixel[2] === 255) {
+      return false;  // white pixel - no collision
+    }
+    if (pixel[0] === 255 && pixel[1] === 255 && pixel[2] === 0) {
+      return false;  // yellow pixel (powerup) - no collision
+    }
+
+    // Any other color means collision
+    return true;
   }
 
   checkCollision(player) {
-    // Check current position
-    const isOver = this.checkPixel(player.x, player.y, player.x, player.y);
-
-    // Early return if already colliding
-    if (isOver) {
-      return { isAboutToHit: false, isOver: true };
-    }
-
     // Look ahead for potential collisions
     for (const angleOffset of this.lookAheadAngles) {
       const checkAngle = player.angle + angleOffset;
@@ -51,10 +51,10 @@ export class CollisionDetection {
       const aheadY = player.y + Math.sin(checkAngle) * this.lookAheadDistance;
 
       if (this.checkPixel(aheadX, aheadY, player.x, player.y)) {
-        return { isAboutToHit: true, isOver: false };
+        return { isAboutToHit: true };
       }
     }
 
-    return { isAboutToHit: false, isOver: false };
+    return { isAboutToHit: false };
   }
 }

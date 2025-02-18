@@ -39,11 +39,10 @@ export class GameSocket {
     });
   }
 
-  emitPixelState(isAboutToHit, isOver) {
+  emitPixelState(isAboutToHit) {
     this.socket.emit('pixelState', {
       roomCode: this.currentRoom,
       isAboutToHit,
-      isOver
     });
   }
 

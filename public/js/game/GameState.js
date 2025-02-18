@@ -59,10 +59,10 @@ export class GameState {
 
       if (isCurrentPlayer) {
         const collision = this.collisionDetection.checkCollision(player);
-        this.socket.emitPixelState(collision.isAboutToHit, collision.isOver);
-        color = collision.isOver ? '#00ff00' : (collision.isAboutToHit ? '#ffff00' : '#ff0000');
+        this.socket.emitPixelState(collision.isAboutToHit);
+        color = collision.isAboutToHit ? '#ffff00' : '#ff0000';
       } else {
-        color = player.is_over ? '#00ff00' : (player.is_about_to_hit ? '#ffff00' : '#0000ff');
+        color = player.is_about_to_hit ? '#ffff00' : '#0000ff';
       }
 
       this.renderer.drawPlayer(player, color);
