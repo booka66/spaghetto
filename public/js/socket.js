@@ -32,6 +32,12 @@ export class GameSocket {
     }
   }
 
+  startNewRound() {
+    if (this.isHost && this.currentRoom) {
+      this.socket.emit('startNewRound', this.currentRoom);
+    }
+  }
+
   emitTurn(direction) {
     this.socket.emit('turn', {
       roomCode: this.currentRoom,
@@ -52,6 +58,18 @@ export class GameSocket {
 
   onGameStarted(callback) {
     this.socket.on('gameStarted', callback);
+  }
+
+  onRoundStarted(callback) {
+    this.socket.on('roundStarted', callback);
+  }
+
+  onRoundOver(callback) {
+    this.socket.on('roundOver', callback);
+  }
+
+  onGameOver(callback) {
+    this.socket.on('gameOver', callback);
   }
 
   onGameState(callback) {

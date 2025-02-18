@@ -17,6 +17,7 @@ const POWERUP_DURATION = 15000; // 15 seconds
 const POWERUP_COLLECTION_RADIUS = 25; // Increased from 10 to 25 pixels
 const POWERUP_SIZE = 5;
 const BULLET_SPEED = 5;
+const WINS_NEEDED = 10;
 
 // Store rooms and players
 const rooms = new Map();
@@ -57,7 +58,23 @@ function createPlayerData() {
     respawn_timer: 0,
     bullets: 0,
     activeBullets: [],
+    score: 0
   };
+}
+
+function resetRound(room) {
+  room.players.forEach((player) => {
+    player.x = Math.random() * GAME_WIDTH;
+    player.y = Math.random() * GAME_HEIGHT;
+    player.angle = Math.random() * Math.PI * 2;
+    player.is_dead = false;
+    player.is_about_to_hit = false;
+    player.bullets = 0;
+    player.activeBullets = [];
+    player.turning = 0;
+  });
+  room.powerUps = [];
+  room.roundInProgress = true;
 }
 
 io.on('connection', (socket) => {
@@ -71,7 +88,9 @@ io.on('connection', (socket) => {
     rooms.set(roomCode, {
       host: socket.id,
       players: players,
-      gameStarted: false
+      gameStarted: false,
+      roundInProgress: false,
+      lastPowerUpSpawn: 0
     });
 
     socket.join(roomCode);
@@ -85,7 +104,7 @@ io.on('connection', (socket) => {
       callback({ error: 'Room not found' });
       return;
     }
-    if (room.gameStarted) {
+    if (room.gameStarted && room.roundInProgress) {
       callback({ error: 'Game already in progress' });
       return;
     }
@@ -101,15 +120,62 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomCode);
     if (room && room.host === socket.id) {
       room.gameStarted = true;
+      room.roundInProgress = true;
       io.to(roomCode).emit('gameStarted');
+    }
+  });
+
+  socket.on('startNewRound', (roomCode) => {
+    const room = rooms.get(roomCode);
+    if (room && room.host === socket.id && !room.roundInProgress) {
+      resetRound(room);
+      io.to(roomCode).emit('roundStarted');
     }
   });
 
   socket.on('pixelState', ({ roomCode, isAboutToHit }) => {
     const room = rooms.get(roomCode);
-    if (room) {
+    if (room && room.roundInProgress) {
       const player = room.players.get(socket.id);
       if (player) {
+        if (isAboutToHit && !player.is_dead) {
+          player.is_dead = true;
+
+          // Check if round is over (only one player alive)
+          let alivePlayers = 0;
+          let lastAlivePlayer = null;
+          room.players.forEach((p, id) => {
+            if (!p.is_dead) {
+              alivePlayers++;
+              lastAlivePlayer = id;
+            }
+          });
+
+          if (alivePlayers <= 1 && lastAlivePlayer) {
+            const winningPlayer = room.players.get(lastAlivePlayer);
+            winningPlayer.score++;
+            room.roundInProgress = false;
+
+            // Check if game is over
+            if (winningPlayer.score >= WINS_NEEDED) {
+              io.to(roomCode).emit('gameOver', {
+                winner: lastAlivePlayer,
+                scores: Array.from(room.players.entries()).map(([id, p]) => ({
+                  id,
+                  score: p.score
+                }))
+              });
+            } else {
+              io.to(roomCode).emit('roundOver', {
+                winner: lastAlivePlayer,
+                scores: Array.from(room.players.entries()).map(([id, p]) => ({
+                  id,
+                  score: p.score
+                }))
+              });
+            }
+          }
+        }
         player.is_about_to_hit = isAboutToHit;
       }
     }
@@ -161,57 +227,33 @@ setInterval(() => {
   const currentTime = Date.now();
 
   rooms.forEach((room, roomCode) => {
-    if (room.gameStarted) {
+    if (room.gameStarted && room.roundInProgress) {
       // Update all players and their bullets
       room.players.forEach((player) => {
-        if (player.is_about_to_hit) {
-          player.is_dead = true;
-          player.respawn_timer = 3000;
-          player.bullets = 0;
-          player.activeBullets = [];
-          player.turning = 0;
-        }
+        if (!player.is_dead) {
+          // Update player position
+          const deltaTime = currentTime - player.lastUpdate;
+          updatePlayerPosition(player, deltaTime);
+          player.lastUpdate = currentTime;
 
-        if (player.is_dead) {
-          player.respawn_timer -= 1000 / 60;
-          if (player.respawn_timer <= 0) {
-            player.is_dead = false;
-            player.is_about_to_hit = false;
-            player.x = Math.random() * GAME_WIDTH;
-            player.y = Math.random() * GAME_HEIGHT;
-            player.angle = Math.random() * Math.PI * 2;
+          if (player.activeBullets) {
+            player.activeBullets = player.activeBullets.map(bullet => {
+              const newX = bullet.x + Math.cos(bullet.angle) * BULLET_SPEED;
+              const newY = bullet.y + Math.sin(bullet.angle) * BULLET_SPEED;
+
+              // Check if bullet has reached screen edge
+              if (newX < 0 || newX > GAME_WIDTH || newY < 0 || newY > GAME_HEIGHT) {
+                return null; // Mark for removal
+              }
+
+              return {
+                x: newX,
+                y: newY,
+                angle: bullet.angle
+              };
+            }).filter(bullet => bullet !== null); // Remove bullets that hit screen edge
           }
-          return;
         }
-        // Update player position
-        const deltaTime = currentTime - player.lastUpdate;
-        const oldX = player.x;
-        const oldY = player.y;
-        updatePlayerPosition(player, deltaTime);
-
-        if (oldX !== player.x || oldY !== player.y) {
-          console.log(`Player moved: (${oldX},${oldY}) -> (${player.x},${player.y})`);
-        }
-
-        if (player.activeBullets) {
-          player.activeBullets = player.activeBullets.map(bullet => {
-            const newX = bullet.x + Math.cos(bullet.angle) * BULLET_SPEED;
-            const newY = bullet.y + Math.sin(bullet.angle) * BULLET_SPEED;
-
-            // Check if bullet has reached screen edge
-            if (newX < 0 || newX > GAME_WIDTH || newY < 0 || newY > GAME_HEIGHT) {
-              return null; // Mark for removal
-            }
-
-            return {
-              x: newX,
-              y: newY,
-              angle: bullet.angle
-            };
-          }).filter(bullet => bullet !== null); // Remove bullets that hit screen edge
-        }
-
-        player.lastUpdate = currentTime;
       });
 
       // Spawn power-ups
@@ -236,7 +278,7 @@ setInterval(() => {
         );
       }
 
-      // Check for power-up collection with improved collision detection
+      // Check for power-up collection
       room.players.forEach((player) => {
         if (room.powerUps) {
           room.powerUps = room.powerUps.filter(powerUp => {
@@ -244,30 +286,29 @@ setInterval(() => {
             const dy = powerUp.y - player.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
 
-            if (distance < POWERUP_COLLECTION_RADIUS) { // Using larger collection radius
+            if (distance < POWERUP_COLLECTION_RADIUS) {
               if (powerUp.type === 'bullet') {
-                player.bullets += 3; // Give player 3 bullets
+                player.bullets += 3;
               }
-              // Emit power-up collection event
               io.to(roomCode).emit('powerUpCollected', {
                 playerId: player.id,
                 powerUpType: powerUp.type
               });
-              return false; // Remove the power-up
+              return false;
             }
-            return true; // Keep the power-up
+            return true;
           });
         }
       });
 
-      // Broadcast game state to all players in the room
+      // Broadcast game state
       io.to(roomCode).emit('gameState', {
         players: Array.from(room.players.entries()),
         powerUps: room.powerUps || []
       });
     }
   });
-}, 1000 / 60); // 60 FPS
+}, 1000 / 60);
 
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, '0.0.0.0', () => {
