@@ -11,6 +11,36 @@ export class CollisionDetection {
     // Pre-calculate common angles for collision detection
     this.lookAheadAngles = [-0.2, -0.1, 0, 0.1, 0.2];
     this.lookAheadDistance = 3;
+    this.playerSize = 2; // Player head radius
+    this.bulletHitboxSize = 6;
+  }
+
+  checkBulletCollisions(players) {
+    players.forEach((player, playerId) => {
+      if (player.is_dead) return;
+
+      players.forEach((otherPlayer, otherPlayerId) => {
+        if (playerId === otherPlayerId || otherPlayer.is_dead) return;
+
+        // Check each bullet from otherPlayer
+        if (otherPlayer.activeBullets) {
+          otherPlayer.activeBullets = otherPlayer.activeBullets.filter(bullet => {
+            const dx = bullet.x - player.x;
+            const dy = bullet.y - player.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            // If bullet hits player's head
+            if (distance < this.playerSize + this.bulletHitboxSize) {
+              player.is_dead = true;
+              return false; // Remove the bullet
+            }
+            return true;
+          });
+        }
+      });
+    });
+
+    return players;
   }
 
   checkPixel(x, y, currentX, currentY) {
