@@ -12,7 +12,6 @@ export class Player {
     this.bullets = 0;
     this.activeBullets = [];
     this.bulletSpeed = 5;
-    this.bulletRange = 200;
   }
 
   update(deltaTime) {
@@ -76,7 +75,7 @@ export class Player {
       // Check if bullet is within range
       const dx = bullet.x - this.x;
       const dy = bullet.y - this.y;
-      return Math.sqrt(dx * dx + dy * dy) < this.bulletRange;
+      return Math.sqrt(dx * dx + dy * dy);
     });
   }
 }

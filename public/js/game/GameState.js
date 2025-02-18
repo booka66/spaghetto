@@ -12,20 +12,18 @@ export class GameState {
     this.powerUps = [];
     this.lastUpdate = 0;
     this.updateInterval = 1000 / 60;
+    this.gameOver = false;
 
-    // Handle power-up spawning
     this.socket.onPowerUpSpawned((powerUp) => {
       this.powerUps.push(powerUp);
     });
 
-    // Handle power-up collection
     this.socket.onPowerUpCollected((data) => {
-      // Remove the collected power-up
       this.powerUps = this.powerUps.filter(powerUp => {
         const dx = powerUp.x - this.players.get(data.playerId)?.x;
         const dy = powerUp.y - this.players.get(data.playerId)?.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
-        return distance >= 25; // Keep power-ups that weren't collected
+        return distance >= 25;
       });
     });
   }
@@ -34,22 +32,41 @@ export class GameState {
     this.reset();
   }
 
+  initialize() {
+    this.reset();
+  }
+
   reset() {
     this.renderer.clear();
+    this.renderer.resetTrails();
     this.renderer.drawBackground();
     this.lastUpdate = 0;
   }
 
   update(gameState) {
+    if (this.gameOver) {
+      this.socket.emitGameOver();
+      return;
+    }
     const currentTime = performance.now();
     if (currentTime - this.lastUpdate < this.updateInterval) {
       return;
     }
 
-    this.clearBulletPaths();
+    // Clear only the main canvas each frame
+    this.renderer.clearMainCanvas();
+    this.renderer.drawBackground();
+
+    // Draw the trails first
+    this.renderer.renderTrails();
 
     // Update powerUps from server state
     this.powerUps = gameState.powerUps;
+
+    // Draw powerUps
+    this.powerUps.forEach(powerUp => {
+      this.renderer.drawPowerUp(powerUp);
+    });
 
     // Update and draw players
     const players = new Map(gameState.players);
@@ -65,18 +82,15 @@ export class GameState {
         color = player.is_about_to_hit ? '#ffff00' : '#0000ff';
       }
 
+      // Draw player
       this.renderer.drawPlayer(player, color);
 
+      // Draw bullets
       if (player.activeBullets) {
         player.activeBullets.forEach(bullet => {
           this.renderer.drawBullet(bullet);
         });
       }
-    });
-
-    // Draw powerUps
-    this.powerUps.forEach(powerUp => {
-      this.renderer.drawPowerUp(powerUp);
     });
 
     this.lastUpdate = currentTime;

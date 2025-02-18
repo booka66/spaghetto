@@ -16,6 +16,7 @@ const POWERUP_SPAWN_INTERVAL = 10000; // 10 seconds
 const POWERUP_DURATION = 15000; // 15 seconds
 const POWERUP_COLLECTION_RADIUS = 25; // Increased from 10 to 25 pixels
 const POWERUP_SIZE = 5;
+const BULLET_SPEED = 5;
 
 // Store rooms and players
 const rooms = new Map();
@@ -192,19 +193,22 @@ setInterval(() => {
           console.log(`Player moved: (${oldX},${oldY}) -> (${player.x},${player.y})`);
         }
 
-        // Update bullets
         if (player.activeBullets) {
-          const BULLET_SPEED = 3;
-          player.activeBullets = player.activeBullets.map(bullet => ({
-            x: ((bullet.x + Math.cos(bullet.angle) * BULLET_SPEED) % GAME_WIDTH + GAME_WIDTH) % GAME_WIDTH,
-            y: ((bullet.y + Math.sin(bullet.angle) * BULLET_SPEED) % GAME_HEIGHT + GAME_HEIGHT) % GAME_HEIGHT,
-            angle: bullet.angle
-          })).filter(bullet => {
-            const MAX_DISTANCE = 100;
-            const dx = bullet.x - player.x;
-            const dy = bullet.y - player.y;
-            return Math.sqrt(dx * dx + dy * dy) < MAX_DISTANCE;
-          });
+          player.activeBullets = player.activeBullets.map(bullet => {
+            const newX = bullet.x + Math.cos(bullet.angle) * BULLET_SPEED;
+            const newY = bullet.y + Math.sin(bullet.angle) * BULLET_SPEED;
+
+            // Check if bullet has reached screen edge
+            if (newX < 0 || newX > GAME_WIDTH || newY < 0 || newY > GAME_HEIGHT) {
+              return null; // Mark for removal
+            }
+
+            return {
+              x: newX,
+              y: newY,
+              angle: bullet.angle
+            };
+          }).filter(bullet => bullet !== null); // Remove bullets that hit screen edge
         }
 
         player.lastUpdate = currentTime;
