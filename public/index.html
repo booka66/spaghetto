@@ -2,11 +2,11 @@
 <html>
 
 <head>
-  <title>Snake Paint</title>
+  <title>Snake Paint - Multiplayer</title>
   <style>
     canvas {
       border: 1px solid black;
-      display: block;
+      display: none;
       margin: 20px auto;
       position: relative;
       z-index: 1;
@@ -14,12 +14,60 @@
 
     body {
       display: flex;
+      flex-direction: column;
       justify-content: center;
       align-items: center;
       height: 100vh;
       margin: 0;
       background-color: #f0f0f0;
-      position: relative;
+      font-family: Arial, sans-serif;
+    }
+
+    .menu-container {
+      text-align: center;
+      padding: 20px;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+
+    .button {
+      padding: 10px 20px;
+      margin: 10px;
+      border: none;
+      border-radius: 5px;
+      background-color: #4CAF50;
+      color: white;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .button:hover {
+      background-color: #45a049;
+    }
+
+    .input-field {
+      padding: 10px;
+      margin: 10px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: 16px;
+    }
+
+    .waiting-screen {
+      display: none;
+      text-align: center;
+    }
+
+    .player-list {
+      margin-top: 20px;
+      padding: 10px;
+      background: #f8f8f8;
+      border-radius: 5px;
+    }
+
+    .game-screen {
+      display: none;
     }
 
     .background-text {
@@ -28,108 +76,205 @@
       left: 50%;
       transform: translate(-50%, -50%);
       font-size: 120px;
-      font-family: Arial, sans-serif;
       color: rgba(0, 0, 0, 0.15);
       white-space: nowrap;
       font-weight: bold;
       text-align: center;
       width: 100%;
+      z-index: 0;
     }
   </style>
 </head>
 
 <body>
-  <div class="background-text">I LOVE YOU NATHAN</div>
-  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <div id="menuScreen" class="menu-container">
+    <h1>Snake Paint</h1>
+    <button id="createRoomBtn" class="button">Create Room</button>
+    <div>
+      <input type="text" id="roomCodeInput" class="input-field" placeholder="Enter Room Code" maxlength="4">
+      <button id="joinRoomBtn" class="button">Join Room</button>
+    </div>
+  </div>
+
+  <div id="waitingScreen" class="waiting-screen">
+    <h2>Waiting Room</h2>
+    <div id="roomCodeDisplay"></div>
+    <div id="playerList" class="player-list">
+      <h3>Players:</h3>
+      <ul id="playersList"></ul>
+    </div>
+    <div id="hostControls" style="display: none;">
+      <button id="startGameBtn" class="button">Start Game</button>
+    </div>
+  </div>
+
+  <div id="gameScreen" class="game-screen">
+    <div class="background-text">I LOVE YOU NATHAN</div>
+    <canvas id="gameCanvas" width="1080" height="720"></canvas>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
+    let currentRoom = null;
+    let isHost = false;
+
+    // Menu screen elements
+    const menuScreen = document.getElementById('menuScreen');
+    const createRoomBtn = document.getElementById('createRoomBtn');
+    const joinRoomBtn = document.getElementById('joinRoomBtn');
+    const roomCodeInput = document.getElementById('roomCodeInput');
+
+    // Waiting screen elements
+    const waitingScreen = document.getElementById('waitingScreen');
+    const roomCodeDisplay = document.getElementById('roomCodeDisplay');
+    const playersList = document.getElementById('playersList');
+    const hostControls = document.getElementById('hostControls');
+    const startGameBtn = document.getElementById('startGameBtn');
+
+    // Game screen elements
+    const gameScreen = document.getElementById('gameScreen');
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // Draw the initial message on the canvas
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.font = '48px Arial';
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
-    ctx.textAlign = 'center';
-    ctx.fillText('I LOVE YOU NATHAN', canvas.width / 2, canvas.height / 2);
-
-    let myId = null;
-    socket.on('connect', () => {
-      myId = socket.id;
-    });
-    function checkPixel(x, y, currentX, currentY) {
-      if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return false;
-      if (Math.abs(x - currentX) < 2 && Math.abs(y - currentY) < 2) return false;
-      const pixel = ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data;
-      return pixel[0] !== 255 || pixel[1] !== 255 || pixel[2] !== 255;
-    }
-    function checkCollision(player) {
-      const isOver = checkPixel(player.x, player.y, player.x, player.y);
-      const lookAhead = 3;
-      const angles = [-0.2, -0.1, 0, 0.1, 0.2];
-      let isAboutToHit = false;
-      for (const angleOffset of angles) {
-        const checkAngle = player.angle + angleOffset;
-        const aheadX = player.x + Math.cos(checkAngle) * lookAhead;
-        const aheadY = player.y + Math.sin(checkAngle) * lookAhead;
-        if (!isOver && checkPixel(aheadX, aheadY, player.x, player.y)) {
-          isAboutToHit = true;
-          break;
+    createRoomBtn.addEventListener('click', () => {
+      socket.emit('createRoom', (response) => {
+        if (response.roomCode) {
+          currentRoom = response.roomCode;
+          isHost = true;
+          showWaitingScreen(response.roomCode);
+          hostControls.style.display = 'block';
         }
-      }
-      return {isAboutToHit, isOver};
-    }
-    socket.on('gameState', (gameState) => {
-      const players = new Map(gameState);
-      players.forEach((player, id) => {
-        let color;
-        if (id === myId) {
-          const {isAboutToHit, isOver} = checkCollision(player);
-          socket.emit('pixelState', {isAboutToHit, isOver});
-          if (isOver) {
-            color = '#00ff00';
-          } else if (isAboutToHit) {
-            color = '#ffff00';
-          } else {
-            color = '#ff0000';
-          }
-        } else {
-          if (player.is_over) {
-            color = '#00ff00';
-          } else if (player.is_about_to_hit) {
-            color = '#ffff00';
-          } else {
-            color = '#0000ff';
-          }
-        }
-        ctx.beginPath();
-        ctx.fillStyle = color;
-        ctx.arc(player.x, player.y, 2, 0, Math.PI * 2);
-        ctx.fill();
       });
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowLeft') {
-        socket.emit('turn', -1);
-      } else if (e.key === 'ArrowRight') {
-        socket.emit('turn', 1);
-      } else if (e.key === 'r') {
-        ctx.fillStyle = 'white';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        // Redraw the text after reset
-        ctx.font = '48px Arial';
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
-        ctx.textAlign = 'center';
-        ctx.fillText('I LOVE YOU NATHAN', canvas.width / 2, canvas.height / 2);
+
+    joinRoomBtn.addEventListener('click', () => {
+      const roomCode = roomCodeInput.value.toUpperCase();
+      if (roomCode.length === 4) {
+        socket.emit('joinRoom', roomCode, (response) => {
+          if (response.error) {
+            alert(response.error);
+          } else {
+            currentRoom = roomCode;
+            showWaitingScreen(roomCode);
+          }
+        });
       }
     });
-    document.addEventListener('keyup', (e) => {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        socket.emit('turn', 0);
+
+    startGameBtn.addEventListener('click', () => {
+      if (isHost && currentRoom) {
+        socket.emit('startGame', currentRoom);
       }
     });
+
+    function showWaitingScreen(roomCode) {
+      menuScreen.style.display = 'none';
+      waitingScreen.style.display = 'block';
+      roomCodeDisplay.textContent = `Room Code: ${roomCode}`;
+    }
+
+    function showGameScreen() {
+      waitingScreen.style.display = 'none';
+      gameScreen.style.display = 'block';
+      canvas.style.display = 'block';
+      initializeGame();
+    }
+
+    socket.on('playerList', (players) => {
+      playersList.innerHTML = '';
+      players.forEach(playerId => {
+        const li = document.createElement('li');
+        li.textContent = playerId === socket.id ? 'You' : 'Player ' + playerId.slice(0, 4);
+        playersList.appendChild(li);
+      });
+    });
+
+    socket.on('gameStarted', () => {
+      showGameScreen();
+    });
+
+    socket.on('roomClosed', () => {
+      alert('Room has been closed');
+      window.location.reload();
+    });
+
+    function initializeGame() {
+      // Initialize the canvas
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.font = '48px Arial';
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+      ctx.textAlign = 'center';
+      ctx.fillText('I LOVE YOU NATHAN', canvas.width / 2, canvas.height / 2);
+
+      // Game logic from your original code
+      function checkPixel(x, y, currentX, currentY) {
+        if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return false;
+        if (Math.abs(x - currentX) < 2 && Math.abs(y - currentY) < 2) return false;
+        const pixel = ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data;
+        return pixel[0] !== 255 || pixel[1] !== 255 || pixel[2] !== 255;
+      }
+
+      function checkCollision(player) {
+        const isOver = checkPixel(player.x, player.y, player.x, player.y);
+        const lookAhead = 3;
+        const angles = [-0.2, -0.1, 0, 0.1, 0.2];
+        let isAboutToHit = false;
+
+        for (const angleOffset of angles) {
+          const checkAngle = player.angle + angleOffset;
+          const aheadX = player.x + Math.cos(checkAngle) * lookAhead;
+          const aheadY = player.y + Math.sin(checkAngle) * lookAhead;
+          if (!isOver && checkPixel(aheadX, aheadY, player.x, player.y)) {
+            isAboutToHit = true;
+            break;
+          }
+        }
+        return {isAboutToHit, isOver};
+      }
+
+      socket.on('gameState', (gameState) => {
+        const players = new Map(gameState);
+        players.forEach((player, id) => {
+          let color;
+          if (id === socket.id) {
+            const {isAboutToHit, isOver} = checkCollision(player);
+            socket.emit('pixelState', {roomCode: currentRoom, isAboutToHit, isOver});
+            color = isOver ? '#00ff00' : (isAboutToHit ? '#ffff00' : '#ff0000');
+          } else {
+            color = player.is_over ? '#00ff00' : (player.is_about_to_hit ? '#ffff00' : '#0000ff');
+          }
+
+          ctx.beginPath();
+          ctx.fillStyle = color;
+          ctx.arc(player.x, player.y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      });
+
+      // Update keyboard controls to include room code
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') {
+          socket.emit('turn', {roomCode: currentRoom, direction: -1});
+        } else if (e.key === 'ArrowRight') {
+          socket.emit('turn', {roomCode: currentRoom, direction: 1});
+        } else if (e.key === 'r') {
+          ctx.fillStyle = 'white';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.font = '48px Arial';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+          ctx.textAlign = 'center';
+          ctx.fillText('I LOVE YOU NATHAN', canvas.width / 2, canvas.height / 2);
+        }
+      });
+
+      document.addEventListener('keyup', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          socket.emit('turn', {roomCode: currentRoom, direction: 0});
+        }
+      });
+    }
   </script>
 </body>
 
