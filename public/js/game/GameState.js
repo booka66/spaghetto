@@ -1,19 +1,56 @@
-import { CollisionDetection } from './CollisionDetection.js';
-import { Renderer } from './Renderer.js';
+import { CollisionDetection } from './game-renderer.js';
 
 export class GameState {
   constructor(canvas, socket) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { willReadFrequently: true });
     this.socket = socket;
-    this.renderer = new Renderer(this.ctx, canvas.width, canvas.height);
+
+    // Import the enhanced renderer if available
+    this.useEnhancedRenderer = typeof window.Renderer !== 'undefined';
+
+    if (this.useEnhancedRenderer && window.Renderer) {
+      console.log("Using enhanced renderer");
+      this.renderer = new window.Renderer(this.ctx, canvas.width, canvas.height);
+    } else {
+      // Fallback to basic renderer from original code
+      console.log("Using fallback renderer");
+      this.renderer = {
+        clear: () => {
+          this.ctx.clearRect(0, 0, canvas.width, canvas.height);
+        },
+        clearMainCanvas: () => {
+          this.ctx.clearRect(0, 0, canvas.width, canvas.height);
+        },
+        drawBackground: () => {
+          this.ctx.font = '48px Arial';
+          this.ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+          this.ctx.textAlign = 'center';
+          this.ctx.fillText('SPAGHETTO', canvas.width / 2, canvas.height / 2);
+        },
+        drawPlayer: (player, color) => {
+          this.ctx.beginPath();
+          this.ctx.fillStyle = color;
+          this.ctx.arc(player.x, player.y, 2, 0, Math.PI * 2);
+          this.ctx.fill();
+          return false;
+        },
+        renderTrails: () => { },
+        resetTrails: () => { }
+      };
+    }
+
+    // Initialize collision detection
     this.collisionDetection = new CollisionDetection(this.ctx);
+
+    // Game state variables
     this.players = new Map();
     this.powerUps = [];
     this.lastUpdate = 0;
     this.updateInterval = 1000 / 60;
     this.gameOver = false;
 
+    // Set up power-up handling
     this.socket.onPowerUpSpawned((powerUp) => {
       this.powerUps.push(powerUp);
     });
@@ -32,10 +69,6 @@ export class GameState {
     this.reset();
   }
 
-  initialize() {
-    this.reset();
-  }
-
   reset() {
     this.renderer.clear();
     this.renderer.resetTrails();
@@ -48,6 +81,7 @@ export class GameState {
       this.socket.emitGameOver();
       return;
     }
+
     const currentTime = performance.now();
     if (currentTime - this.lastUpdate < this.updateInterval) {
       return;
@@ -61,11 +95,19 @@ export class GameState {
     this.renderer.renderTrails();
 
     // Update powerUps from server state
-    this.powerUps = gameState.powerUps;
+    this.powerUps = gameState.powerUps || [];
 
     // Draw powerUps
     this.powerUps.forEach(powerUp => {
-      this.renderer.drawPowerUp(powerUp);
+      if (typeof this.renderer.drawPowerUp === 'function') {
+        this.renderer.drawPowerUp(powerUp);
+      } else {
+        // Fallback drawing
+        this.ctx.beginPath();
+        this.ctx.fillStyle = '#ffff00';
+        this.ctx.arc(powerUp.x, powerUp.y, 5, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
     });
 
     // Update and draw players
@@ -83,12 +125,37 @@ export class GameState {
       }
 
       // Draw player
-      this.renderer.drawPlayer(player, color);
+      if (typeof this.renderer.drawPlayerTrail === 'function' && player.hasBeenInitialized) {
+        // Draw trail using enhanced renderer
+        const prevX = player.prevX || player.x;
+        const prevY = player.prevY || player.y;
+
+        this.renderer.drawPlayerTrail(
+          prevX, prevY, player.x, player.y,
+          color, 9, player.is_ghost
+        );
+      }
+
+      this.renderer.drawPlayer(player, color, isCurrentPlayer);
+
+      // Store position for next frame
+      player.prevX = player.x;
+      player.prevY = player.y;
 
       // Draw bullets
       if (player.activeBullets) {
         player.activeBullets.forEach(bullet => {
-          this.renderer.drawBullet(bullet);
+          if (typeof this.renderer.drawBullet === 'function') {
+            this.renderer.drawBullet(bullet);
+          } else {
+            // Fallback bullet drawing
+            this.ctx.save();
+            this.ctx.translate(bullet.x, bullet.y);
+            this.ctx.rotate(bullet.angle);
+            this.ctx.fillStyle = 'black';
+            this.ctx.fillRect(-6, -2, 12, 4);
+            this.ctx.restore();
+          }
         });
       }
     });

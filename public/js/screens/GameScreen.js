@@ -7,7 +7,7 @@ export class GameScreen {
     this.frameCounter = 0;
     this.lastFpsUpdate = 0;
     this.fps = 0;
-    this.showFps = false; // Set to true for debugging
+    this.showFps = true; // Set to true for debugging
 
     // Add overlay elements
     this.createOverlay();
@@ -131,7 +131,7 @@ export class GameScreen {
       }
     }
 
-    // Update game state
+    // Update game state with enhanced renderer
     this.gameState.update(gameState);
   }
 
