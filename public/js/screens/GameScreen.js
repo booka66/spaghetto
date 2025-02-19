@@ -4,14 +4,23 @@ export class GameScreen {
     this.socket = socket;
     this.element = document.getElementById('gameScreen');
     this.canvas = document.getElementById('gameCanvas');
+    this.frameCounter = 0;
+    this.lastFpsUpdate = 0;
+    this.fps = 0;
+    this.showFps = false; // Set to true for debugging
 
     // Add overlay elements
     this.createOverlay();
+    this.createFpsCounter();
 
     // Bind event handlers
     this.handleGameState = this.handleGameState.bind(this);
     this.handleKeyDown = this.handleKeyDown.bind(this);
     this.handleKeyUp = this.handleKeyUp.bind(this);
+
+    // Debounced shoot handler
+    this.lastShootTime = 0;
+    this.shootMinInterval = 200; // Min 200ms between shots
   }
 
   createOverlay() {
@@ -29,6 +38,20 @@ export class GameScreen {
     this.overlay.style.textAlign = 'center';
     this.overlay.style.zIndex = '1000';
     this.element.appendChild(this.overlay);
+  }
+
+  createFpsCounter() {
+    this.fpsCounter = document.createElement('div');
+    this.fpsCounter.style.position = 'absolute';
+    this.fpsCounter.style.top = '10px';
+    this.fpsCounter.style.right = '10px';
+    this.fpsCounter.style.color = 'black';
+    this.fpsCounter.style.backgroundColor = 'rgba(255, 255, 255, 0.7)';
+    this.fpsCounter.style.padding = '5px';
+    this.fpsCounter.style.borderRadius = '3px';
+    this.fpsCounter.style.fontFamily = 'monospace';
+    this.fpsCounter.style.display = this.showFps ? 'block' : 'none';
+    this.element.appendChild(this.fpsCounter);
   }
 
   initialize() {
@@ -57,6 +80,9 @@ export class GameScreen {
 
       this.overlay.innerHTML = overlayContent;
       this.overlay.style.display = 'block';
+
+      // Reset game state when round ends
+      this.gameState.reset();
     });
 
     this.socket.onGameOver(({ winner, scores }) => {
@@ -85,15 +111,36 @@ export class GameScreen {
       window.location.reload();
     });
 
-    document.addEventListener('keydown', this.handleKeyDown);
-    document.addEventListener('keyup', this.handleKeyUp);
+    // Use passive event listeners for better performance
+    document.addEventListener('keydown', this.handleKeyDown, { passive: true });
+    document.addEventListener('keyup', this.handleKeyUp, { passive: true });
   }
 
   handleGameState(gameState) {
+    // Performance monitoring
+    const now = performance.now();
+    this.frameCounter++;
+
+    if (now - this.lastFpsUpdate > 1000) {
+      this.fps = Math.round((this.frameCounter * 1000) / (now - this.lastFpsUpdate));
+      this.lastFpsUpdate = now;
+      this.frameCounter = 0;
+
+      if (this.showFps) {
+        this.fpsCounter.textContent = `FPS: ${this.fps}`;
+      }
+    }
+
+    // Update game state
     this.gameState.update(gameState);
   }
 
   handleKeyDown(e) {
+    // Prevent default behaviors for game controls
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', ' '].includes(e.key)) {
+      e.preventDefault();
+    }
+
     switch (e.key) {
       case 'ArrowLeft':
         this.socket.emitTurn(-1);
@@ -107,7 +154,18 @@ export class GameScreen {
         }
         break;
       case 'ArrowUp':
-        this.socket.emitShoot();
+        const now = performance.now();
+        if (now - this.lastShootTime >= this.shootMinInterval) {
+          this.socket.emitShoot();
+          this.lastShootTime = now;
+        }
+        break;
+      case 'f':
+        // Toggle FPS counter (for debugging)
+        if (e.ctrlKey) {
+          this.showFps = !this.showFps;
+          this.fpsCounter.style.display = this.showFps ? 'block' : 'none';
+        }
         break;
     }
   }
@@ -132,7 +190,18 @@ export class GameScreen {
   }
 
   cleanup() {
+    // Proper cleanup to prevent memory leaks
     document.removeEventListener('keydown', this.handleKeyDown);
     document.removeEventListener('keyup', this.handleKeyUp);
+
+    // Clean up any game state resources
+    if (this.gameState && this.gameState.cleanup) {
+      this.gameState.cleanup();
+    }
+
+    // Clean up socket resources
+    if (this.socket && this.socket.disconnect) {
+      this.socket.disconnect();
+    }
   }
 }

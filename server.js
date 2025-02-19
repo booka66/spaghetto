@@ -10,14 +10,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Game constants
 const GAME_WIDTH = 1080;
 const GAME_HEIGHT = 720;
-const TURN_RATE = 0.1;
-const MOVEMENT_SPEED = 1.5;
+const TURN_RATE = 0.2;
+const MOVEMENT_SPEED = 3.5;
 const POWERUP_SPAWN_INTERVAL = 10000; // 10 seconds
 const POWERUP_DURATION = 15000; // 15 seconds
-const POWERUP_COLLECTION_RADIUS = 25; // Increased from 10 to 25 pixels
+const POWERUP_COLLECTION_RADIUS = 15; // Increased from 10 to 25 pixels
 const POWERUP_SIZE = 5;
-const BULLET_SPEED = 5;
+const BULLET_SPEED = 15;
 const WINS_NEEDED = 10;
+
+const FRAME_RATE = 30; // Reduce from 60 to 30 FPS for server updates
+const PLAYER_UPDATE_THRESHOLD = 1; // Minimum distance for position updates
+const BULLET_BATCH_SIZE = 5; // Only send every 5th bullet update
 
 // Store rooms and players
 const rooms = new Map();
@@ -228,15 +232,39 @@ setInterval(() => {
 
   rooms.forEach((room, roomCode) => {
     if (room.gameStarted && room.roundInProgress) {
+      // Track which players had significant changes
+      const changedPlayers = new Map();
+      let anyChanges = false;
+
       // Update all players and their bullets
-      room.players.forEach((player) => {
+      room.players.forEach((player, playerId) => {
         if (!player.is_dead) {
+          // Store previous state for change detection
+          const prevX = player.x;
+          const prevY = player.y;
+          const prevAngle = player.angle;
+
           // Update player position
           const deltaTime = currentTime - player.lastUpdate;
           updatePlayerPosition(player, deltaTime);
           player.lastUpdate = currentTime;
 
-          if (player.activeBullets) {
+          // Check if position changed significantly
+          const dx = player.x - prevX;
+          const dy = player.y - prevY;
+          const distanceMoved = Math.sqrt(dx * dx + dy * dy);
+          const angleDiff = Math.abs(player.angle - prevAngle);
+
+          if (distanceMoved > PLAYER_UPDATE_THRESHOLD || angleDiff > 0.1) {
+            changedPlayers.set(playerId, player);
+            anyChanges = true;
+          }
+
+          // Update bullets with more efficient tracking
+          if (player.activeBullets && player.activeBullets.length > 0) {
+            const prevBulletCount = player.activeBullets.length;
+
+            // Update bullet positions
             player.activeBullets = player.activeBullets.map(bullet => {
               const newX = bullet.x + Math.cos(bullet.angle) * BULLET_SPEED;
               const newY = bullet.y + Math.sin(bullet.angle) * BULLET_SPEED;
@@ -251,12 +279,19 @@ setInterval(() => {
                 y: newY,
                 angle: bullet.angle
               };
-            }).filter(bullet => bullet !== null); // Remove bullets that hit screen edge
+            }).filter(bullet => bullet !== null);
+
+            // If bullets were added or removed, mark player for update
+            if (prevBulletCount !== player.activeBullets.length) {
+              changedPlayers.set(playerId, player);
+              anyChanges = true;
+            }
           }
         }
       });
 
       // Spawn power-ups
+      let powerUpChanged = false;
       if (!room.lastPowerUpSpawn || currentTime - room.lastPowerUpSpawn > POWERUP_SPAWN_INTERVAL) {
         const powerUp = {
           x: Math.random() * (GAME_WIDTH - 2 * POWERUP_SIZE) + POWERUP_SIZE,
@@ -269,18 +304,24 @@ setInterval(() => {
         room.powerUps.push(powerUp);
         room.lastPowerUpSpawn = currentTime;
         io.to(roomCode).emit('powerUpSpawned', powerUp);
+        powerUpChanged = true;
       }
 
       // Remove expired power-ups
       if (room.powerUps) {
+        const prevPowerUpCount = room.powerUps.length;
         room.powerUps = room.powerUps.filter(powerUp =>
           currentTime - powerUp.spawnTime < POWERUP_DURATION
         );
+        if (prevPowerUpCount !== room.powerUps.length) {
+          powerUpChanged = true;
+        }
       }
 
       // Check for power-up collection
-      room.players.forEach((player) => {
-        if (room.powerUps) {
+      room.players.forEach((player, playerId) => {
+        if (room.powerUps && room.powerUps.length > 0) {
+          const prevPowerUpCount = room.powerUps.length;
           room.powerUps = room.powerUps.filter(powerUp => {
             const dx = powerUp.x - player.x;
             const dy = powerUp.y - player.y;
@@ -289,26 +330,48 @@ setInterval(() => {
             if (distance < POWERUP_COLLECTION_RADIUS) {
               if (powerUp.type === 'bullet') {
                 player.bullets += 3;
+                changedPlayers.set(playerId, player);
               }
               io.to(roomCode).emit('powerUpCollected', {
-                playerId: player.id,
+                playerId: playerId,
                 powerUpType: powerUp.type
               });
               return false;
             }
             return true;
           });
+
+          if (prevPowerUpCount !== room.powerUps.length) {
+            powerUpChanged = true;
+          }
         }
       });
 
-      // Broadcast game state
-      io.to(roomCode).emit('gameState', {
-        players: Array.from(room.players.entries()),
-        powerUps: room.powerUps || []
-      });
+      // Optimize network traffic - only send updates when necessary
+      if (anyChanges || powerUpChanged || room.fullUpdateNeeded) {
+        // Every 10th update, send full state to prevent client/server drift
+        const isFullUpdate = room.updateCounter % 10 === 0;
+        room.updateCounter = (room.updateCounter || 0) + 1;
+
+        if (isFullUpdate) {
+          // Send complete game state
+          io.to(roomCode).emit('gameState', {
+            players: Array.from(room.players.entries()),
+            powerUps: room.powerUps || []
+          });
+          room.fullUpdateNeeded = false;
+        } else if (changedPlayers.size > 0 || powerUpChanged) {
+          // Send partial update with only changed data
+          io.to(roomCode).emit('gameStatePartial', {
+            players: Array.from(changedPlayers.entries()),
+            powerUps: powerUpChanged ? room.powerUps : null,
+            timestamp: currentTime
+          });
+        }
+      }
     }
   });
-}, 1000 / 60);
+}, 1000 / FRAME_RATE);
 
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, '0.0.0.0', () => {
